@@ -10,4 +10,7 @@
 / HomeR GET POST
 
 /profile ProfileR GET
+
+/autocomplete/reasons ACReasonsR GET
+/autocomplete/statement ACStatementR GET
 /proof ProofR GET

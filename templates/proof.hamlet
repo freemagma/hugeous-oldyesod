@@ -1,0 +1,3 @@
+<p>Result: #{show res}
+<form enctype=#{enctype}>
+^{widget}

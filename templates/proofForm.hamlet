@@ -1,0 +1,11 @@
+#{extra}
+    <h1>Multi Field Form
+    <table>
+        <tr>
+            <th> Statement
+            <th> Reason
+        $forall (sv,rv) <- views
+            <tr>
+                <th>^{fvInput sv} #
+                <th>^{fvInput rv}
+    <input type=submit value="Submit">

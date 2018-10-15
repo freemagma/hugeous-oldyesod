@@ -26,6 +26,8 @@ import qualified Yesod.Core.Unsafe as Unsafe
 import qualified Data.CaseInsensitive as CI
 import qualified Data.Text.Encoding as TE
 
+import Yesod.Form.Jquery
+
 -- | The foundation datatype for your application. This can be a good place to
 -- keep settings and values requiring initialization before your application
 -- starts running, such as database connections. Every handler will have
@@ -165,6 +167,9 @@ instance Yesod App where
     isAuthorized FaviconR _ = return Authorized
     isAuthorized RobotsR _ = return Authorized
     isAuthorized (StaticR _) _ = return Authorized
+    isAuthorized ProofR _ = return Authorized
+    isAuthorized ACReasonsR _ = return Authorized
+    isAuthorized ACStatementR _ = return Authorized
 
     -- the profile route requires that the user is authenticated, so we
     -- delegate to that function
@@ -283,6 +288,8 @@ instance RenderMessage App FormMessage where
 instance HasHttpManager App where
     getHttpManager :: App -> Manager
     getHttpManager = appHttpManager
+
+instance YesodJquery App
 
 unsafeHandler :: App -> Handler a -> IO a
 unsafeHandler = Unsafe.fakeHandlerGetLogger appLogger
