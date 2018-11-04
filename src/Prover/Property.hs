@@ -13,88 +13,56 @@ data Geom = Point
           | Polygon
           deriving (Show, Eq)
 
+data PType = Length
+           | Radius
+           | Degree
+           | Equals
+           | Congruent
+           | Contains
+           | Endpoint
+           | Bounded
+           | IsRight
+           | Implies PType
+           | Not PType
+           deriving (Show, Eq)
+
+isImplication :: PType -> Bool
+isImplication (Implies pt') = True
+isImplication _ = False
+
 data PropertyG r a = Concretely a
-                   | Length r
-                   | Radius r
-                   | Degree r
-                   | Intersect r r
-                   | Equals r
-                   | Congruent r
-                   | Endpoint r
-                   | Contains r
-                   | Bounded [r]
-                   | Implies (PropertyG r a)
-                   | Not (PropertyG r a)
-                   deriving (Show, Eq)
+                   | Relation { ptype :: PType, ref :: r, specs :: ([r], [r])}
+                   deriving Eq
+
+instance (Show a, Show r) => Show (PropertyG r a) where
+  show (Concretely a) = "Concretely " ++ (show a)
+  show (Relation pt r _) = (show pt) ++ " " ++ (show r)
 
 type Property a = PropertyG Id a
 
-data PType = ConcretelyP
-           | LengthP
-           | RadiusP
-           | DegreeP
-           | IntersectP
-           | EqualsP
-           | CongruentP
-           | ContainsP
-           | EndpointP
-           | BoundedP
-           | ImpliesP PType
-           | NotP PType
-           deriving (Show, Eq)
+mkRel :: PType -> r -> PropertyG r a
+mkRel pt r = Relation pt r ([],[])
 
-references :: PropertyG r a -> [r]
-references (Length a)      = [a]
-references (Length a)      = [a]
-references (Radius a)      = [a]
-references (Degree a)      = [a]
-references (Intersect a b) = [a, b]
-references (Equals a)      = [a]
-references (Congruent a)   = [a]
-references (Contains a)    = [a]
-references (Endpoint a)    = [a]
-references (Bounded xs)    = xs
-references (Implies p')    = references p'
-references (Not p')        = references p'
+inconcrete :: PropertyG r a -> Bool
+inconcrete (Concretely a) = False
+inconcrete _ = True
 
-ptypeOf :: PropertyG r a -> PType
-ptypeOf p = case p of
-  (Concretely _)  -> ConcretelyP
-  (Length _)      -> LengthP
-  (Radius _)      -> RadiusP
-  (Degree _)      -> DegreeP
-  (Intersect _ _) -> IntersectP
-  (Equals _)      -> EqualsP
-  (Congruent _)   -> CongruentP
-  (Contains _)    -> ContainsP
-  (Endpoint _)    -> EndpointP
-  (Bounded _)     -> BoundedP
-  (Not p')        -> NotP (ptypeOf p')
-  (Implies p')    -> ImpliesP (ptypeOf p')
+antiparallelPTypes :: PType -> [PType]
+antiparallelPTypes Congruent = [Congruent]
+antiparallelPTypes Equals = [Equals]
+antiparallelPTypes (Not pt) = Not <$> antiparallelPTypes pt
+antiparallelPTypes (Implies pt) = Implies <$> antiparallelPTypes pt
+antiparallelPTypes _ = []
 
-replaceRefsEnum :: (Enum e) => PropertyG r a -> e -> PropertyG e a
-replaceRefsEnum p e = case p of
-  (Concretely a)  -> Concretely a
-  (Length _)      -> Length e
-  (Radius _)      -> Radius e
-  (Degree _)      -> Degree e
-  (Intersect _ _) -> Intersect e (succ e)
-  (Equals _)      -> Equals e
-  (Congruent _)   -> Congruent e
-  (Contains _)    -> Contains e
-  (Endpoint _)    -> Endpoint e
-  (Bounded xs)    -> Bounded $ enumFromTo e (toEnum $ ((length xs) - 1) + fromEnum e)
-  (Implies p')    -> Implies $ replaceRefsEnum p' e
-  (Not p')        -> Not $ replaceRefsEnum p' e
+parallelPTypes :: PType -> [PType]
+parallelPTypes Bounded = [Contains]
+parallelPTypes Endpoint = [Contains]
+parallelPTypes (Not pt) = Not <$> parallelPTypes pt
+parallelPTypes (Implies pt) = Implies <$> parallelPTypes pt
+parallelPTypes _ = []
 
-requireds :: (r, PropertyG r a) -> [(r, PropertyG r a)]
-requireds (_, Concretely _)  = []
-requireds (_, Length _)      = []
-requireds (_, Radius _)      = []
-requireds (_, Degree _)      = []
-requireds (i, Intersect a b) = [(a, Intersect i b)]
-requireds (i, Equals a)      = [(a, Equals i)]
-requireds (i, Congruent a)   = [(a, Congruent i)]
-requireds (_, Contains _)    = []
-requireds (i, Endpoint a)    = [(i, Contains a)]
-requireds (i, Bounded xs)   = [(i, Contains x) | x <- xs]
+additionalProps :: (r, PropertyG r a) -> [(r, PropertyG r a)]
+additionalProps (i, Relation pt r (as, bs)) = para ++ anti
+  where para = (\pt -> (i, Relation pt r (as, bs))) <$> (parallelPTypes pt)
+        anti = (\pt -> (r, Relation pt i (bs, as))) <$> (antiparallelPTypes pt)
+additionalProps _ = []
