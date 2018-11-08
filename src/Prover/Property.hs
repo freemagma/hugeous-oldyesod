@@ -2,6 +2,8 @@
 
 module Prover.Property where
 
+import Data.Hashable
+
 type Id = Int
 
 data Geom = Point
@@ -11,7 +13,14 @@ data Geom = Point
           | Angle
           | Value
           | Polygon
-          deriving (Show, Eq)
+          deriving (Show, Eq, Enum)
+
+instance Semigroup Geom where
+  (<>) a b = a
+instance Monoid Geom where
+  mempty = Point
+instance Hashable Geom where
+  hashWithSalt salt g = hashWithSalt salt (fromEnum g)
 
 data PType = Length
            | Radius
@@ -30,8 +39,35 @@ isImplication :: PType -> Bool
 isImplication (Implies pt') = True
 isImplication _ = False
 
+data Spec r = Spec (Info r) (Info r)
+  deriving (Eq)
+data Info r = None | Cyc [r] | Ord [r]
+  deriving (Eq)
+
+instance Functor Spec where
+  fmap f (Spec a b) = Spec (f <$> a) (f <$> b)
+instance Functor Info where
+  fmap f None = None
+  fmap f (Cyc as) = Cyc $ f <$> as
+  fmap f (Ord as) = Ord $ f <$> as
+
+swap :: Spec r -> Spec r
+swap (Spec a b) = Spec b a
+
+(=~=) :: Eq r => (Spec r) -> (Spec r) -> Bool
+Spec None None =~= Spec None None = True
+u@(Spec (Ord as) (Ord bs)) =~= v@(Spec (Ord cs) (Ord ds)) = u == v
+Spec (Cyc as) (Cyc bs) =~= Spec (Cyc cs) (Cyc ds) =
+  elem (cs, ds) $ zip (cycPermute as) (cycPermute bs)
+_ =~= _ = False
+
+cycPermute :: [a] -> [[a]]
+cycPermute as = (uniPermutes as) ++ (uniPermutes $ reverse as)
+  where takeDrop as t d = take t $ drop d as
+        uniPermutes as = takeDrop (cycle as) (length as) <$> [0..(length as - 1)]
+
 data PropertyG r a = Concretely a
-                   | Relation { ptype :: PType, ref :: r, specs :: ([r], [r])}
+                   | Relation { ptype :: PType, ref :: r, spec :: Spec r}
                    deriving Eq
 
 instance (Show a, Show r) => Show (PropertyG r a) where
@@ -41,7 +77,7 @@ instance (Show a, Show r) => Show (PropertyG r a) where
 type Property a = PropertyG Id a
 
 mkRel :: PType -> r -> PropertyG r a
-mkRel pt r = Relation pt r ([],[])
+mkRel pt r = Relation pt r (Spec None None)
 
 inconcrete :: PropertyG r a -> Bool
 inconcrete (Concretely a) = False
@@ -62,7 +98,7 @@ parallelPTypes (Implies pt) = Implies <$> parallelPTypes pt
 parallelPTypes _ = []
 
 additionalProps :: (r, PropertyG r a) -> [(r, PropertyG r a)]
-additionalProps (i, Relation pt r (as, bs)) = para ++ anti
-  where para = (\pt -> (i, Relation pt r (as, bs))) <$> (parallelPTypes pt)
-        anti = (\pt -> (r, Relation pt i (bs, as))) <$> (antiparallelPTypes pt)
+additionalProps (i, Relation pt r s) = para ++ anti
+  where para = (\pt -> (i, Relation pt r s)) <$> (parallelPTypes pt)
+        anti = (\pt -> (r, Relation pt i (swap s))) <$> (antiparallelPTypes pt)
 additionalProps _ = []

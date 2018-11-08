@@ -10,32 +10,45 @@ import qualified Data.Sequence as S
 import Data.List (foldl, intercalate)
 import Data.Sequence (Seq ( (:|>) ), empty)
 import qualified Data.HashMap.Strict as HM
+import qualified Data.IntSet as I
 import qualified Data.Tree as Tree
+import qualified Data.Text as T
 import Data.Maybe (catMaybes)
+import Data.Bits (xor)
+import Data.Hashable
+
+-- Types and Typeclass Instances
+
+type Name = T.Text
+
+instance Hashable I.IntSet where
+  hashWithSalt salt s = foldr xor 0 (hashWithSalt salt <$> I.toList s)
 
 data Obj a = Obj { _geom  :: Geom
                  , _ident :: Id
                  , _props :: Seq (Property a) }
-
+makeLenses ''Obj
 instance (Show a) => Show (Obj a) where
   show (Obj g i ps) = (show i) ++ ": " ++ (show g) ++ " " ++ (show $ toList ps)
-makeLenses ''Obj
+
+data System a = System { _nextId :: Id
+                       , _objs :: Seq (Obj a)
+                       , _boundedBy :: HM.HashMap (Geom, I.IntSet) Id
+                       , _nameId :: HM.HashMap Name Id}
+makeLenses ''System
+instance (Show a) => Show (System a) where
+  show s = intercalate "\n" (toList $ show <$> (s ^. objs))
+
+-- Basic Methods --
 
 newObj :: Geom -> Id -> Obj a
 newObj g i = Obj g i S.empty
 
-data System a = System { _nextId :: Id
-                       , _objs :: Seq (Obj a) }
-
-instance (Show a) => Show (System a) where
-  show (System i os) = intercalate "\n" (toList $ show <$> os)
-makeLenses ''System
-
 empty :: System a
-empty = System 0 S.empty
+empty = System 0 S.empty HM.empty HM.empty
 
 insert :: Geom -> System a -> System a
-insert g (System nid os) = System (nid + 1) (os :|> (newObj g nid))
+insert g s = (nextId %~ (+1)) $ (objs %~ (:|> (newObj g $ s ^. nextId))) s
 
 addProperty :: Id -> Property a -> System a -> System a
 addProperty i p s = foldr addPropertyAlone' s ips
@@ -52,6 +65,13 @@ addPropertyGeom i (Relation pt g _) s = (addProperty i p') s'
 insertWithProps :: Geom -> [Property a] -> System a -> System a
 insertWithProps g ps s = ((compose $ addProperty i <$> ps).(insert g)) s
   where i = s ^. nextId
+
+nameObj :: Id -> Name -> System a -> System a
+nameObj i n = nameId %~ (HM.insert n i)
+
+boundBy :: Id -> I.IntSet -> System a -> System a
+boundBy i ps s = boundedBy %~ (HM.insert (s ^. (objs.(ix i).geom), ps) i) $
+  (compose $ (\x -> addProperty i $ mkRel Bounded x) <$> (I.toList ps)) s
 
 -- Insertion Helper Methods --
 
@@ -114,6 +134,13 @@ objectMatch a b
         match _ b m = [m]
 
 propertyMatch :: Property a -> Property a -> Maybe Mapping
-propertyMatch (Relation r i (as, bs)) (Relation s j (cs, ds)) = if predicate then Just result else Nothing
-  where predicate = (r == s) && (length as == length cs) && (length bs == length ds)
-        result    = HM.fromList $ zip (i : as ++ bs) (j : cs ++ ds)
+propertyMatch (Relation r i spa) (Relation s j spb) = if r /= s then Nothing else result
+  where result = HM.insert i j <$> (specMatch spa spb)
+
+specMatch :: Spec Id -> Spec Id -> Maybe Mapping
+specMatch (Spec None None) (Spec None None) = Just HM.empty
+specMatch (Spec (Cyc a) (Cyc b)) (Spec (Cyc c) (Cyc d)) =
+  if (length a == length c) && (length b == length d) then Just $ HM.fromList $ zip (a ++ b) (c ++ d) else Nothing
+specMatch (Spec (Ord a) (Ord b)) (Spec (Ord c) (Ord d)) =
+  if (length a == length c) && (length b == length d) then Just $ HM.fromList $ zip (a ++ b) (c ++ d) else Nothing
+specMatch _ _ = Nothing
