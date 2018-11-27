@@ -23,14 +23,14 @@ makeLenses ''Reason
 assertEq :: Eq a => Assertion a -> Assertion a -> Bool
 assertEq (a, Concretely x) (b, Concretely y) = (b == a) && (x == y)
 assertEq (a, Relation pa ra sa) (b, Relation pb rb sb) =
-  (a == b) && (pa == pb) && (ra == rb) && (sa =~= sb)
+  (a == b) && (pa == pb) && (ra =~= rb) && (sa =~~= sb)
 
 implications :: System a -> Seq (Assertion a)
 implications s = foldr (><) S.empty $ objimps <$> (s ^. objs)
   where objimps o = ((,) (o ^. ident)) <$> (S.filter (isImplication.ptype) $ o ^. props)
 
 mapAssertion :: Mapping -> Assertion a -> Assertion a
-mapAssertion m (i, Relation pt j s) = (m ! i, Relation pt (m ! j) ((m!) <$> s))
+mapAssertion m (i, Relation pt j s) = (m ! i, Relation pt ((m!) <$> j) ((m!) <$> s))
 mapAssertion m (i, c) = (m ! i, c)
 
 mapImply :: Mapping -> Assertion a -> Assertion a
@@ -51,39 +51,39 @@ validate r a s = go (r ^. systems) a s
 -- Reasons --
 rightAngles :: Reason a
 rightAngles = Reason "Right angles are congruent" $ [
-  ((insertWithProps Angle [mkRel IsRight 1, mkRel (Implies Congruent) 0]).
-  (insertWithProps Angle [mkRel IsRight 0]))
+  ((insertWithProps Angle [mkRelN IsRight, mkRel (Implies Congruent) 0]).
+  (insertWithProps Angle [mkRelN IsRight]))
   Y.empty]
 
 --reflexive :: Reason a
---reflexive = Reason "Reflexive property of congruence" $ 
+--reflexive = Reason "Reflexive property of congruence" $
 
 sideAngleSide :: Reason a
 sideAngleSide = Reason "SAS Postulate" $ [
-  ((addProperty 0 $ Relation (Implies Congruent) 7 (Spec (Cyc [4, 5, 6]) (Cyc [11, 12, 13]))).
-  (insertWithProps Angle [mkRel Bounded 8, mkRel Bounded 9, mkRel Congruent 14]).
-  (insertWithProps Angle [mkRel Bounded 1, mkRel Bounded 2]).
-  (addProperty 1 $ mkRel Congruent 8).(addProperty 2 $ mkRel Congruent 9).
+  ((addProperty 0 $ Relation (Implies Congruent) (Ref 7) (Spec (Cyc [1, 2, 3]) (Cyc [8, 9, 10]))).
+  (insertWithProps Angle [mkRel Bounded 11, mkRel Bounded 12, mkRel Congruent 14]).
+  (insertWithProps Angle [mkRel Bounded 4, mkRel Bounded 5]).
+  (addProperty 4 $ mkRel Congruent 11).(addProperty 5 $ mkRel Congruent 12).
   (insertPolygon 3).(insertPolygon 3))
   Y.empty]
 
 -- Testing --
 
 ras :: System a
-ras = ((insertWithProps Angle [mkRel IsRight 7, mkRel Bounded 4, mkRel Bounded 5]).
-      (insertWithProps Angle [mkRel IsRight 6, mkRel Bounded 5, mkRel Bounded 4]).
-      (insertWithProps Segment [mkRel Endpoint 2, mkRel Endpoint 3]).
-      (insertWithProps Segment [mkRel Endpoint 0, mkRel Endpoint 1, mkRel Contains 2]).
+ras = ((insertWithProps Angle [mkRelN IsRight, mkRel Bounded 4, mkRel Bounded 5]).
+      (insertWithProps Angle [mkRelN IsRight, mkRel Bounded 5, mkRel Bounded 4]).
+      (insertWithProps Segment [mkRelR Bounded (Cyc [2, 3])]).
+      (insertWithProps Segment [mkRelR Bounded (Cyc [0, 1]), mkRel Contains 2]).
       (insert Point).(insert Point).(insert Point).(insert Point))
       Y.empty
 
 sass :: System a
-sass = ((addProperty 1 $ mkRel Congruent 1).
-       (insertWithProps Angle [mkRel Bounded 1, mkRel Bounded 9, mkRel Congruent 11]).
-       (insertWithProps Angle [mkRel Bounded 3, mkRel Bounded 1]).
-       (insertWithProps Polygon [mkRel Bounded 8, mkRel Bounded 9, mkRel Bounded 1]).
-       (insertWithProps Line [mkRel Endpoint 6, mkRel Endpoint 7, mkRel Congruent 3]).
-       (insertWithProps Line [mkRel Endpoint 5, mkRel Endpoint 7]).
+sass = ((addProperty 4 $ mkRel Congruent 4).
+       (insertWithProps Angle [mkRel Bounded 4, mkRel Bounded 5, mkRel Congruent 11]).
+       (insertWithProps Angle [mkRel Bounded 4, mkRel Bounded 9]).
+       (insertWithProps Polygon [mkRelR Bounded (Cyc [2, 7, 3])]).
+       (insertWithProps Segment [mkRelR Bounded (Cyc [2, 7]), mkRel Congruent 5]).
+       (insertWithProps Segment [mkRelR Bounded (Cyc [3, 7])]).
        (insert Point).(insertPolygon 3))
        Y.empty
 

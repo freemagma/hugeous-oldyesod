@@ -3,6 +3,7 @@
 module Prover.Property where
 
 import Data.Hashable
+import Data.Foldable (toList)
 
 type Id = Int
 
@@ -28,7 +29,6 @@ data PType = Length
            | Equals
            | Congruent
            | Contains
-           | Endpoint
            | Bounded
            | IsRight
            | Implies PType
@@ -39,35 +39,56 @@ isImplication :: PType -> Bool
 isImplication (Implies pt') = True
 isImplication _ = False
 
-data Spec r = Spec (Info r) (Info r)
-  deriving (Eq)
-data Info r = None | Cyc [r] | Ord [r]
+data Spec r = Spec (Ref r) (Ref r)
+  deriving (Eq, Show)
+data Ref r = None | Ref r | Cyc [r] | Ord [r]
   deriving (Eq)
 
+instance Show a => Show (Ref a) where
+  show None = ""
+  show (Ref a) = show a
+  show (Cyc a) = "<" ++ show a ++ ">"
+  show (Ord a) = show a
 instance Functor Spec where
   fmap f (Spec a b) = Spec (f <$> a) (f <$> b)
-instance Functor Info where
+instance Functor Ref where
   fmap f None = None
+  fmap f (Ref r) = Ref $ f r
   fmap f (Cyc as) = Cyc $ f <$> as
   fmap f (Ord as) = Ord $ f <$> as
+instance Foldable Ref where
+  foldMap f None = mempty
+  foldMap f (Ref r) = f r
+  foldMap f (Cyc as) = foldMap f as
+  foldMap f (Ord as) = foldMap f as
+  foldr f b None = b
+  foldr f b (Ref a) = f a b
+  foldr f b (Cyc as) = foldr f b as
+  foldr f b (Ord as) = foldr f b as
 
 swap :: Spec r -> Spec r
 swap (Spec a b) = Spec b a
 
-(=~=) :: Eq r => (Spec r) -> (Spec r) -> Bool
-Spec None None =~= Spec None None = True
-u@(Spec (Ord as) (Ord bs)) =~= v@(Spec (Ord cs) (Ord ds)) = u == v
-Spec (Cyc as) (Cyc bs) =~= Spec (Cyc cs) (Cyc ds) =
+(=~=) :: Eq r => (Ref r) -> (Ref r) -> Bool
+(Cyc as) =~= (Cyc bs) = elem as $ cycPermute bs
+ra =~= rb = ra == rb
+
+(=~~=) :: Eq r => (Spec r) -> (Spec r) -> Bool
+Spec (Cyc as) (Cyc bs) =~~= Spec (Cyc cs) (Cyc ds) =
   elem (cs, ds) $ zip (cycPermute as) (cycPermute bs)
-_ =~= _ = False
+Spec a b =~~= Spec c d = (a =~= c) && (b =~= d)
 
 cycPermute :: [a] -> [[a]]
 cycPermute as = (uniPermutes as) ++ (uniPermutes $ reverse as)
   where takeDrop as t d = take t $ drop d as
         uniPermutes as = takeDrop (cycle as) (length as) <$> [0..(length as - 1)]
 
+cycStandard :: Ord a => [a] -> [a]
+cycStandard xs = if last mf < (mf !! 2) then (head mf) : (reverse $ tail mf) else mf
+  where mf = take (length xs) $ dropWhile (/= (minimum xs)) $ cycle xs
+
 data PropertyG r a = Concretely a
-                   | Relation { ptype :: PType, ref :: r, spec :: Spec r}
+                   | Relation { ptype :: PType, ref :: (Ref r), spec :: (Spec r)}
                    deriving Eq
 
 instance (Show a, Show r) => Show (PropertyG r a) where
@@ -77,7 +98,13 @@ instance (Show a, Show r) => Show (PropertyG r a) where
 type Property a = PropertyG Id a
 
 mkRel :: PType -> r -> PropertyG r a
-mkRel pt r = Relation pt r (Spec None None)
+mkRel pt r = Relation pt (Ref r) (Spec None None)
+
+mkRelR :: PType -> Ref r -> PropertyG r a
+mkRelR pt r = Relation pt r (Spec None None)
+
+mkRelN :: PType -> PropertyG r a
+mkRelN pt = Relation pt None (Spec None None)
 
 inconcrete :: PropertyG r a -> Bool
 inconcrete (Concretely a) = False
@@ -92,13 +119,12 @@ antiparallelPTypes _ = []
 
 parallelPTypes :: PType -> [PType]
 parallelPTypes Bounded = [Contains]
-parallelPTypes Endpoint = [Contains]
 parallelPTypes (Not pt) = Not <$> parallelPTypes pt
 parallelPTypes (Implies pt) = Implies <$> parallelPTypes pt
 parallelPTypes _ = []
 
 additionalProps :: (r, PropertyG r a) -> [(r, PropertyG r a)]
-additionalProps (i, Relation pt r s) = para ++ anti
-  where para = (\pt -> (i, Relation pt r s)) <$> (parallelPTypes pt)
-        anti = (\pt -> (r, Relation pt i (swap s))) <$> (antiparallelPTypes pt)
+additionalProps (i, Relation pt rr s) = para ++ anti
+  where para = (\r pt -> (i, Relation pt (Ref r) s)) <$> (toList rr) <*> (parallelPTypes pt)
+        anti = (\r pt -> (r, Relation pt (Ref i) (swap s))) <$> (toList rr) <*> (antiparallelPTypes pt)
 additionalProps _ = []

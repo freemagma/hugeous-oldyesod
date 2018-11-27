@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Prover.System where
 
@@ -21,8 +22,11 @@ import Data.Hashable
 
 type Name = T.Text
 
-instance Hashable I.IntSet where
-  hashWithSalt salt s = foldr xor 0 (hashWithSalt salt <$> I.toList s)
+instance Hashable (Ref Id) where
+  hashWithSalt salt None     = hashWithSalt salt salt
+  hashWithSalt salt (Ref x)  = hashWithSalt salt x
+  hashWithSalt salt (Cyc xs) = hashWithSalt salt ((0 :: Int), cycStandard xs)
+  hashWithSalt salt (Ord xs) = hashWithSalt salt ((1 :: Int), xs)
 
 data Obj a = Obj { _geom  :: Geom
                  , _ident :: Id
@@ -33,7 +37,7 @@ instance (Show a) => Show (Obj a) where
 
 data System a = System { _nextId :: Id
                        , _objs :: Seq (Obj a)
-                       , _boundedBy :: HM.HashMap (Geom, I.IntSet) Id
+                       , _referencedBy :: HM.HashMap (Geom, Ref Id) Id
                        , _nameId :: HM.HashMap Name Id}
 makeLenses ''System
 instance (Show a) => Show (System a) where
@@ -60,7 +64,7 @@ addPropertyAlone' (i, p) = over (objs.(ix i).props) (:|> p)
 addPropertyGeom :: Id -> PropertyG Geom a -> System a -> System a
 addPropertyGeom i (Relation pt g _) s = (addProperty i p') s'
   where p'  = mkRel pt (s ^. nextId)
-        s'  = insert g s
+        s'  = (compose $ insert <$> toList g) s
 
 insertWithProps :: Geom -> [Property a] -> System a -> System a
 insertWithProps g ps s = ((compose $ addProperty i <$> ps).(insert g)) s
@@ -69,9 +73,8 @@ insertWithProps g ps s = ((compose $ addProperty i <$> ps).(insert g)) s
 nameObj :: Id -> Name -> System a -> System a
 nameObj i n = nameId %~ (HM.insert n i)
 
-boundBy :: Id -> I.IntSet -> System a -> System a
-boundBy i ps s = boundedBy %~ (HM.insert (s ^. (objs.(ix i).geom), ps) i) $
-  (compose $ (\x -> addProperty i $ mkRel Bounded x) <$> (I.toList ps)) s
+addReference :: Id -> Ref Id -> System a -> System a
+addReference i r s = referencedBy %~ (HM.insert (s ^. (objs.(ix i).geom), r) i) $ s
 
 -- Insertion Helper Methods --
 
@@ -82,18 +85,17 @@ lookupProperty :: PType -> Obj a -> Seq (Property a)
 lookupProperty pt o = S.filter ((==pt).ptype) $ S.filter inconcrete $ view props o
 
 insertSegBetween :: Id -> Id -> System a -> System a
-insertSegBetween a b s = ((addProperty i $ mkRel Endpoint a).(addProperty i $ mkRel Endpoint b).(insert Segment)) s
-  where i = s ^. nextId
-
-insertPointBetween :: Id -> Id -> System a -> System a
-insertPointBetween a b s = ((addProperty a $ mkRel Endpoint i).(addProperty b $ mkRel Endpoint i).(insert Point)) s
+insertSegBetween a b s = ((addProperty i $ mkRelR Bounded (Cyc [a, b])).(insert Segment)) s
   where i = s ^. nextId
 
 insertPolygon :: Int -> System a -> System a
-insertPolygon n s = compose ((uncurry insertPointBetween) <$> lins) $ s'
+insertPolygon n s = ((compose $ (uncurry insertSegBetween) <$> tups).
+                    (addProperty i $ mkRelR Bounded $ Cyc [(i+1)..(i+n)]).
+                    (compose $ replicate n $ insert Point).
+                    (insert Polygon)) s
   where i    = s ^. nextId
-        s'   = (compose.(replicate n)) (addPropertyGeom i (mkRel Bounded Line)) $ (insert Polygon) s
-        lins = zip [(i+1)..(i+n)] ((i+n) : [(i+1)..(i+n-1)])
+        tups = zip [(i+1)..(i+n)] ((i+n) : [(i+1)..(i+n-1)])
+
 
 -- Matching --
 
@@ -130,17 +132,24 @@ objectMatch a b
   | otherwise = HM.insert (a ^. ident) (b ^. ident) <$> (match (toList $ a ^. props) (toList $ b ^. props) HM.empty)
   where match (x:xs) b m
           | isImplication $ ptype x = match xs b m
-          | otherwise = concat $ match xs b <$> (catMaybes $ ((>>= connectWhile linkedHarsh m).(propertyMatch x)) <$> b)
+          | otherwise = concat $ fmap (match xs b) $ concat $ fmap (catMaybes.(fmap $ connectWhile linkedHarsh m).(propertyMatch x)) b
         match _ b m = [m]
 
-propertyMatch :: Property a -> Property a -> Maybe Mapping
-propertyMatch (Relation r i spa) (Relation s j spb) = if r /= s then Nothing else result
-  where result = HM.insert i j <$> (specMatch spa spb)
+propertyMatch :: Property a -> Property a -> [Mapping]
+propertyMatch (Relation r i spa) (Relation s j spb) = if r /= s then [] else result
+  where result = HM.union <$> (refMatch i j) <*> (specMatch spa spb)
 
-specMatch :: Spec Id -> Spec Id -> Maybe Mapping
-specMatch (Spec None None) (Spec None None) = Just HM.empty
+specMatch :: Spec Id -> Spec Id -> [Mapping]
 specMatch (Spec (Cyc a) (Cyc b)) (Spec (Cyc c) (Cyc d)) =
-  if (length a == length c) && (length b == length d) then Just $ HM.fromList $ zip (a ++ b) (c ++ d) else Nothing
-specMatch (Spec (Ord a) (Ord b)) (Spec (Ord c) (Ord d)) =
-  if (length a == length c) && (length b == length d) then Just $ HM.fromList $ zip (a ++ b) (c ++ d) else Nothing
-specMatch _ _ = Nothing
+  if (length a == length c) && (length b == length d) then
+  fmap (HM.fromList . (zip (c ++ d))) $ zipWith (++) (cycPermute a) (cycPermute b) else []
+specMatch (Spec a b) (Spec c d) = HM.union <$> (refMatch a c) <*> (refMatch b d)
+
+refMatch :: Ref Id -> Ref Id -> [Mapping]
+refMatch None None = [HM.empty]
+refMatch (Ref a) (Ref b) = [HM.singleton a b]
+refMatch (Ord as) (Ord bs) =
+  if length as == length bs then [HM.fromList $ zip as bs] else []
+refMatch (Cyc as) (Cyc bs) =
+  if length as == length bs then fmap (HM.fromList . (zip as)) $ cycPermute bs else []
+refMatch _ _ = []
