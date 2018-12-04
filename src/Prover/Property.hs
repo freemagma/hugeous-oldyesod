@@ -10,6 +10,7 @@ type Id = Int
 data Geom = Point
           | Line
           | Segment
+          | Ray
           | Circle
           | Angle
           | Value
@@ -84,7 +85,8 @@ cycPermute as = (uniPermutes as) ++ (uniPermutes $ reverse as)
         uniPermutes as = takeDrop (cycle as) (length as) <$> [0..(length as - 1)]
 
 cycStandard :: Ord a => [a] -> [a]
-cycStandard xs = if last mf < (mf !! 2) then (head mf) : (reverse $ tail mf) else mf
+cycStandard [a] = [a]
+cycStandard xs  = if last mf < (mf !! 1) then (head mf) : (reverse $ tail mf) else mf
   where mf = take (length xs) $ dropWhile (/= (minimum xs)) $ cycle xs
 
 data PropertyG r a = Concretely a

@@ -23,10 +23,10 @@ import Data.Hashable
 type Name = T.Text
 
 instance Hashable (Ref Id) where
-  hashWithSalt salt None     = hashWithSalt salt salt
-  hashWithSalt salt (Ref x)  = hashWithSalt salt x
-  hashWithSalt salt (Cyc xs) = hashWithSalt salt ((0 :: Int), cycStandard xs)
-  hashWithSalt salt (Ord xs) = hashWithSalt salt ((1 :: Int), xs)
+  hashWithSalt s None     = hashWithSalt s s
+  hashWithSalt s (Ref x)  = hashWithSalt s x
+  hashWithSalt s (Cyc xs) = s `hashWithSalt` (0::Int) `hashWithSalt` xs
+  hashWithSalt s (Ord xs) = s `hashWithSalt` (1::Int) `hashWithSalt` xs
 
 data Obj a = Obj { _geom  :: Geom
                  , _ident :: Id
@@ -59,7 +59,9 @@ addProperty i p s = foldr addPropertyAlone' s ips
   where ips = (i, p) : (additionalProps (i, p))
 
 addPropertyAlone' :: (Id, Property a) -> System a -> System a
-addPropertyAlone' (i, p) = over (objs.(ix i).props) (:|> p)
+addPropertyAlone' (i, p) s = over (objs.(ix i).props) (:|> p) s'
+  where s' = case p of (Relation Bounded r _) -> addReference i r s
+                       _  -> s
 
 addPropertyGeom :: Id -> PropertyG Geom a -> System a -> System a
 addPropertyGeom i (Relation pt g _) s = (addProperty i p') s'
@@ -70,11 +72,19 @@ insertWithProps :: Geom -> [Property a] -> System a -> System a
 insertWithProps g ps s = ((compose $ addProperty i <$> ps).(insert g)) s
   where i = s ^. nextId
 
+insertWithName :: Geom -> Name -> System a -> System a
+insertWithName g n s = (nameObj (s ^. nextId) n) $ (insert g) s
+
 nameObj :: Id -> Name -> System a -> System a
 nameObj i n = nameId %~ (HM.insert n i)
 
+nameObjs :: [Id] -> [Name] -> System a -> System a
+nameObjs is ns = compose $ (uncurry nameObj) <$> (zip is ns)
+
 addReference :: Id -> Ref Id -> System a -> System a
-addReference i r s = referencedBy %~ (HM.insert (s ^. (objs.(ix i).geom), r) i) $ s
+addReference i r s = referencedBy %~ (HM.insert (s ^. (objs.(ix i).geom), r') i) $ s
+  where r' = case r of (Cyc xs) -> Cyc $ cycStandard xs
+                       _ -> r
 
 -- Insertion Helper Methods --
 
