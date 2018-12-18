@@ -32,6 +32,7 @@ data PType = Length
            | Contains
            | Bounded
            | IsRight
+           | Similar
            | Implies PType
            | Not PType
            deriving (Show, Eq)
@@ -66,12 +67,19 @@ instance Foldable Ref where
   foldr f b (Ref a) = f a b
   foldr f b (Cyc as) = foldr f b as
   foldr f b (Ord as) = foldr f b as
+instance Traversable Ref where
+  traverse f None = pure None
+  traverse f (Ref r) = Ref <$> f r
+  traverse f (Cyc as) = Cyc <$> (traverse f as)
+  traverse f (Ord as) = Ord <$> (traverse f as)
+  --traverse :: Applicative f => (a -> f b) -> t a -> f (t b)
 
 swap :: Spec r -> Spec r
 swap (Spec a b) = Spec b a
 
 (=~=) :: Eq r => (Ref r) -> (Ref r) -> Bool
 (Cyc as) =~= (Cyc bs) = elem as $ cycPermute bs
+_  =~= None = True
 ra =~= rb = ra == rb
 
 (=~~=) :: Eq r => (Spec r) -> (Spec r) -> Bool
@@ -91,7 +99,7 @@ cycStandard xs  = if last mf < (mf !! 1) then (head mf) : (reverse $ tail mf) el
 
 data PropertyG r a = Concretely a
                    | Relation { ptype :: PType, ref :: (Ref r), spec :: (Spec r)}
-                   deriving Eq
+                   deriving (Eq)
 
 instance (Show a, Show r) => Show (PropertyG r a) where
   show (Concretely a) = "Concretely " ++ (show a)
@@ -114,6 +122,7 @@ inconcrete _ = True
 
 antiparallelPTypes :: PType -> [PType]
 antiparallelPTypes Congruent = [Congruent]
+antiparallelPTypes Similar = [Similar]
 antiparallelPTypes Equals = [Equals]
 antiparallelPTypes (Not pt) = Not <$> antiparallelPTypes pt
 antiparallelPTypes (Implies pt) = Implies <$> antiparallelPTypes pt

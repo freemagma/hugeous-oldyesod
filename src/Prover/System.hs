@@ -4,6 +4,7 @@
 module Prover.System where
 
 import Prover.Property
+
 import Control.Lens
 import Data.Foldable (toList)
 import Data.Text (Text)
@@ -14,7 +15,7 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.IntSet as I
 import qualified Data.Tree as Tree
 import qualified Data.Text as T
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import Data.Bits (xor)
 import Data.Hashable
 
@@ -94,6 +95,21 @@ compose = foldr (.) id
 lookupProperty :: PType -> Obj a -> Seq (Property a)
 lookupProperty pt o = S.filter ((==pt).ptype) $ S.filter inconcrete $ view props o
 
+lookupFirstProperty :: PType -> Obj a -> Maybe (Property a)
+lookupFirstProperty pt o = S.lookup 0 $ lookupProperty pt o
+
+lookupRay :: Eq a => Id -> Id -> System a -> Maybe Id
+lookupRay a b s = (^. ident) <$> (S.lookup 0 $ S.filter predicate $ s ^. objs)
+  where predicate o = (o ^. geom == Ray) &&
+                      (isJust $ S.elemIndexL (mkRel Bounded a) $ o ^. props) &&
+                      (isJust $ S.elemIndexL (mkRel Contains b) $ o ^. props)
+
+lookupAngle :: Eq a => Id -> Id -> Id -> System a -> Maybe Id
+lookupAngle a b c s = do
+    rayba <- lookupRay b a s
+    raybc <- lookupRay b c s
+    HM.lookup (Angle, (Cyc . cycStandard) [rayba, raybc]) (s ^. referencedBy)
+
 insertSegBetween :: Id -> Id -> System a -> System a
 insertSegBetween a b s = ((addProperty i $ mkRelR Bounded (Cyc [a, b])).(insert Segment)) s
   where i = s ^. nextId
@@ -143,11 +159,12 @@ objectMatch a b
   where match (x:xs) b m
           | isImplication $ ptype x = match xs b m
           | otherwise = concat $ fmap (match xs b) $ concat $ fmap (catMaybes.(fmap $ connectWhile linkedHarsh m).(propertyMatch x)) b
-        match _ b m = [m]
+        match _ _ m = [m]
 
 propertyMatch :: Property a -> Property a -> [Mapping]
 propertyMatch (Relation r i spa) (Relation s j spb) = if r /= s then [] else result
   where result = HM.union <$> (refMatch i j) <*> (specMatch spa spb)
+propertyMatch _ _ = [HM.empty]
 
 specMatch :: Spec Id -> Spec Id -> [Mapping]
 specMatch (Spec (Cyc a) (Cyc b)) (Spec (Cyc c) (Cyc d)) =
@@ -156,7 +173,7 @@ specMatch (Spec (Cyc a) (Cyc b)) (Spec (Cyc c) (Cyc d)) =
 specMatch (Spec a b) (Spec c d) = HM.union <$> (refMatch a c) <*> (refMatch b d)
 
 refMatch :: Ref Id -> Ref Id -> [Mapping]
-refMatch None None = [HM.empty]
+refMatch None _ = [HM.empty]
 refMatch (Ref a) (Ref b) = [HM.singleton a b]
 refMatch (Ord as) (Ord bs) =
   if length as == length bs then [HM.fromList $ zip as bs] else []
